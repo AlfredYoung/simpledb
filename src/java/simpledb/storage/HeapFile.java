@@ -104,6 +104,14 @@ public class HeapFile implements DbFile {
     public void writePage(Page page) throws IOException {
         // some code goes here
         // not necessary for lab1
+        PageId pid = page.getId();
+        int tableId = pid.getTableId();
+        int pgno = pid.getPageNumber();
+        int pgsize = Database.getBufferPool().getPageSize();
+        byte[] data = page.getPageData();
+        RandomAccessFile out = new  RandomAccessFile(file, "rws");
+        out.skipBytes(pgno * pgsize);
+        out.write(data);
     }
 
     /**
@@ -117,17 +125,47 @@ public class HeapFile implements DbFile {
     // see DbFile.java for javadocs
     public List<Page> insertTuple(TransactionId tid, Tuple t)
             throws DbException, IOException, TransactionAbortedException {
-        // some code goes here
-        return null;
-        // not necessary for lab1
+        int numpg = numPages();
+
+        ArrayList<Page> ret = new ArrayList<Page>(1);
+        for(int i = 0; i < numpg; ++i) {
+            HeapPageId pid = new HeapPageId(getId(), i);
+            HeapPage pg = (HeapPage) Database.getBufferPool().getPage(tid, pid, Permissions.READ_WRITE);
+            if (pg.getNumEmptySlots() > 0) {
+                pg.insertTuple(t);
+                ret.add(pg);
+                pg.markDirty(true, tid);
+                //writePage(pg);
+                return ret;
+            }
+        }
+        HeapPageId pid = new HeapPageId(getId(), numpg);
+        HeapPage newpg = new HeapPage(pid, HeapPage.createEmptyPageData());
+        if(newpg.getNumEmptySlots() > 0) {
+            newpg.insertTuple(t);
+            ret.add(newpg);
+            writePage(newpg);
+            return ret;
+        }
+
+        throw new DbException("error on insertTuple: no Tuple can insert");
     }
 
     // see DbFile.java for javadocs
     public ArrayList<Page> deleteTuple(TransactionId tid, Tuple t) throws DbException,
             TransactionAbortedException {
-        // some code goes here
-        return null;
-        // not necessary for lab1
+        RecordId rid = t.getRecordId();
+        PageId pid = rid.getPageId();
+        if(pid.getTableId() != getId()) {
+            throw new DbException("error on deleteTuple: tableid not match");
+        }
+        HeapPage pg = (HeapPage) Database.getBufferPool()
+                .getPage(tid, pid, Permissions.READ_WRITE);
+        pg.deleteTuple(t);
+        pg.markDirty(true, tid);
+        ArrayList<Page> ret = new ArrayList<Page>(1);
+        ret.add(pg);
+        return ret;
     }
 
     // see DbFile.java for javadocs

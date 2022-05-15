@@ -22,8 +22,26 @@ public class IntHistogram {
      * @param min The minimum integer value that will ever be passed to this class for histogramming
      * @param max The maximum integer value that will ever be passed to this class for histogramming
      */
+    private int buckets;
+    private int min;
+    private int max;
+    private int ntups;
+    private int height[];
+    private int cw;
+    private int lastw;
     public IntHistogram(int buckets, int min, int max) {
     	// some code goes here
+        this.buckets = buckets;
+        this.min = min;
+        this.max = max;
+        this.height = new int[buckets];
+        for(int i = 0; i < buckets; ++i)
+            this.height[i] = 0;
+        this.cw = (max - min + 1) / buckets;
+        this.cw = Math.max(1, this.cw);
+        this.lastw = (max - min + 1) - (buckets - 1) * cw;
+        this.ntups = 0;
+        assert(cw > 0);
     }
 
     /**
@@ -32,8 +50,30 @@ public class IntHistogram {
      */
     public void addValue(int v) {
     	// some code goes here
+        assert(v >= min && v <= max);
+        int bucket = Math.min((v - min) / cw, buckets - 1);
+        ++ntups;
+        ++height[bucket];
+    }
+    private double estimateEQ(int b, int w, int v) {
+        if(v > max || v < min) return 0;
+        return 1.0 * height[b] / w / ntups;
     }
 
+    private double estimateLT(int b, int w, int v) {
+        if(v > max) return 1.0;
+        if(v <= min) return 0;
+        double ret = 0;
+        for(int i = 0; i < b; ++i) {
+            ret += height[i];
+        }
+        int lval = (cw * b) + min;
+        int cnt = v - lval;
+        assert(cnt >= 0);
+        ret += 1.0 * height[b] * cnt / w;
+        ret /= ntups;
+        return ret;
+    }
     /**
      * Estimate the selectivity of a particular predicate and operand on this table.
      * 
@@ -47,7 +87,39 @@ public class IntHistogram {
     public double estimateSelectivity(Predicate.Op op, int v) {
 
     	// some code goes here
-        return -1.0;
+        if(ntups == 0) {
+            return 0;
+        }
+        double ans = 0;
+        int bucket = Math.min((v - min) / cw, buckets - 1);
+        int w = bucket < buckets - 1 ? cw : lastw;
+
+
+        switch(op) {
+            case EQUALS:
+                ans = estimateEQ(bucket, w, v);
+                break;
+            case GREATER_THAN:
+                ans = 1.0 - estimateLT(bucket, w, v) - estimateEQ(bucket, w, v);
+                break;
+            case LESS_THAN:
+                ans = estimateLT(bucket, w, v);
+                break;
+            case LESS_THAN_OR_EQ:
+                ans = estimateLT(bucket, w, v) + estimateEQ(bucket, w, v);
+                break;
+            case GREATER_THAN_OR_EQ:
+                ans = 1.0 - estimateLT(bucket, w, v);
+                break;
+            case NOT_EQUALS:
+                ans = 1.0 - estimateEQ(bucket, w, v);
+                break;
+            default:
+                return -1;
+        }
+        //System.out.println(v+" "+ans);
+        return ans;
+
     }
     
     /**
@@ -69,6 +141,6 @@ public class IntHistogram {
      */
     public String toString() {
         // some code goes here
-        return null;
+        return height.toString();
     }
 }

@@ -34,8 +34,8 @@ public class BufferPool {
     constructor instead. */
     public static final int DEFAULT_PAGES = 50;
 
-    private Page[] buffer;
-    private final Map<Integer,Page> pageMap;
+    private final Map<PageId,Page> pageMap;
+    private int numPages;
 
     /**
      * Creates a BufferPool that caches up to numPages pages.
@@ -44,8 +44,8 @@ public class BufferPool {
      */
     public BufferPool(int numPages) {
         // some code goes here
-        buffer = new Page[numPages];
-        pageMap = new HashMap<Integer,Page>();
+        this.numPages = numPages;
+        pageMap = new HashMap<PageId,Page>();
 
     }
     
@@ -80,11 +80,17 @@ public class BufferPool {
      */
     public  Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
-        if(!pageMap.containsKey(pid.hashCode())){
-            Page page = Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid);
-            pageMap.put(pid.hashCode(), page);
+        Page page = pageMap.getOrDefault(pid, null);
+        if(page != null) {
+            return page;
         }
-        return pageMap.get(pid.hashCode());
+        if(numPages <= pageMap.size()) {
+            evictPage();
+        }
+        DbFile df = Database.getCatalog().getDatabaseFile(pid.getTableId());
+        page = df.readPage(pid);
+        pageMap.put(pid, page);
+        return page;
     }
 
     /**
@@ -149,6 +155,12 @@ public class BufferPool {
         throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         // not necessary for lab1
+        DbFile f = Database.getCatalog().getDatabaseFile(tableId);
+        List<Page> pgs = f.insertTuple(tid, t);
+        for(Page pg: pgs) {
+            pg.markDirty(true, tid);
+            pageMap.put(pg.getId(), pg);
+        }
     }
 
     /**
@@ -168,6 +180,13 @@ public class BufferPool {
         throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         // not necessary for lab1
+        int tableId = t.getRecordId().getPageId().getTableId();
+        DbFile f = Database.getCatalog().getDatabaseFile(tableId);
+        List<Page> pgs = f.deleteTuple(tid, t);
+        for(Page pg: pgs) {
+            pg.markDirty(true, tid);
+            pageMap.put(pg.getId(), pg);
+        }
     }
 
     /**
@@ -178,6 +197,10 @@ public class BufferPool {
     public synchronized void flushAllPages() throws IOException {
         // some code goes here
         // not necessary for lab1
+        Set<PageId> keys = pageMap.keySet();
+            for(PageId key: keys) {
+            flushPage(key);
+        }
 
     }
 
@@ -192,6 +215,7 @@ public class BufferPool {
     public synchronized void discardPage(PageId pid) {
         // some code goes here
         // not necessary for lab1
+        pageMap.remove(pid);
     }
 
     /**
@@ -201,6 +225,16 @@ public class BufferPool {
     private synchronized  void flushPage(PageId pid) throws IOException {
         // some code goes here
         // not necessary for lab1
+        if(!pageMap.containsKey(pid)) return;
+        Page pg = pageMap.get(pid);
+        if(pg.isDirty() != null) {
+            int tableid = pid.getTableId();
+            DbFile df = Database.getCatalog().getDatabaseFile(tableid);
+            Database.getLogFile().logWrite(pg.isDirty(), pg.getBeforeImage(), pg);
+            Database.getLogFile().force();
+            df.writePage(pg);
+            pg.markDirty(false, null);
+        }
     }
 
     /** Write all pages of the specified transaction to disk.
@@ -217,6 +251,17 @@ public class BufferPool {
     private synchronized  void evictPage() throws DbException {
         // some code goes here
         // not necessary for lab1
+        for (Map.Entry<PageId, Page> entry : pageMap.entrySet()) {
+            PageId pid = entry.getKey();
+            Page   p   = entry.getValue();
+            if (p.isDirty() == null) {
+                // dont need to flushpage since all page evicted are not dirty
+                // flushPage(pid);
+                discardPage(pid);
+                return;
+            }
+        }
+        throw new DbException("BufferPool: evictPage: all pages are marked as dirty");
     }
 
 }
